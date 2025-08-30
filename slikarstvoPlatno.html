@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, maximum-scale=1.0">
+    <title>Pomoć za Crtanje</title>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            height: 100%;
+            touch-action: manipulation;
+            font-family: -apple-system, sans-serif;
+        }
+        /* Kontejner za video (kameru) */
+        #videoContainer {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+        }
+        #video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        /* Kontejner za odabranu sliku */
+        #imageContainer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 2;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            pointer-events: none; /* Omogućava interakciju kroz element */
+        }
+        #userImage {
+            max-width: 90%;
+            max-height: 90%;
+            opacity: 0.5; /* Početna transparentnost */
+            transition: opacity 0.2s;
+            pointer-events: auto; /* Omogućava interakciju sa slikom */
+            touch-action: none;
+            user-select: none;
+        }
+        /* Kontrole */
+        #controls {
+            position: absolute;
+            bottom: 20px;
+            width: 100%;
+            text-align: center;
+            z-index: 10;
+            background-color: rgba(0,0,0,0.5);
+            padding: 10px 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 10px;
+        }
+        .button {
+            padding: 10px 20px;
+            font-size: 16px;
+            border: none;
+            border-radius: 20px;
+            background-color: #007AFF;
+            color: white;
+            margin: 0 5px;
+        }
+        .slider-container {
+            width: 80%;
+            color: white;
+        }
+        input[type="range"] {
+            width: 100%;
+        }
+        #lockButton {
+            background-color: #ff9500;
+        }
+        #lockButton.locked {
+            background-color: #ff3b30;
+        }
+    </style>
+</head>
+<body>
+    <!-- Prikaz kamere -->
+    <div id="videoContainer">
+        <video id="video" autoplay playsinline></video>
+    </div>
+
+    <!-- Kontejner gde će se postaviti odabrana slika -->
+    <div id="imageContainer">
+        <img id="userImage" style="display: none;">
+    </div>
+
+    <!-- Kontrole na dnu ekrana -->
+    <div id="controls">
+        <div>
+            <input type="file" id="fileInput" accept="image/*" capture="environment" style="display: none;">
+            <button class="button" onclick="document.getElementById('fileInput').click()">Uslikaj/Odaberi</button>
+            <button class="button" id="lockButton" onclick="toggleLock()">Zaključaj</button>
+        </div>
+        <div class="slider-container">
+            <label for="opacitySlider">Providnost: <span id="opacityValue">50%</span></label>
+            <input type="range" id="opacitySlider" min="0" max="1" step="0.01" value="0.5">
+        </div>
+    </div>
+
+    <script>
+        // Varijable stanja
+        let isImageLocked = false;
+        let initialDistance = null;
+        let initialScale = 1;
+        let currentScale = 1;
+        let pos = { x: 0, y: 0 };
+        let startPos = { x: 0, y: 0 };
+
+        // Elementi DOM-a
+        const video = document.getElementById('video');
+        const userImage = document.getElementById('userImage');
+        const fileInput = document.getElementById('fileInput');
+        const opacitySlider = document.getElementById('opacitySlider');
+        const opacityValue = document.getElementById('opacityValue');
+        const lockButton = document.getElementById('lockButton');
+
+        // Pokreni kameru
+        startCamera();
+
+        // Postavi osluškivač za odabir fajla
+        fileInput.addEventListener('change', handleFileSelect);
+
+        // Postavi osluškivač za transparentnost
+        opacitySlider.addEventListener('input', function() {
+            if (userImage.style.display === 'block') {
+                userImage.style.opacity = this.value;
+                opacityValue.textContent = Math.round(this.value * 100) + '%';
+            }
+        });
+
+        // Funkcija za pokretanje kamere
+        function startCamera() {
+            navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } })
+                .then(stream => {
+                    video.srcObject = stream;
+                })
+                .catch(err => {
+                    console.error("Greška sa kamerom: ", err);
+                    alert("Kamera nije dostupna. Proverite dozvolu.");
+                });
+        }
+
+        // Funkcija za rukovanje odabranom slikom
+        function handleFileSelect(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                userImage.src = e.target.result;
+                userImage.style.display = 'block';
+                // Resetuj poziciju i veličinu
+                resetImagePosition();
+                // Ako je slika zaključana, otključaj je prilikom učitavanja nove
+                if (isImageLocked) {
+                    toggleLock();
+                }
+                // Omogući interakciju sa slikom
+                enableImageInteraction();
+            };
+            reader.readAsDataURL(file);
+        }
+
+        // Funkcija za resetovanje pozicije i veličine slike
+        function resetImagePosition() {
+            userImage.style.transform = 'translate(0px, 0px) scale(1)';
+            currentScale = 1;
+            pos = { x: 0, y: 0 };
+        }
+
+        // Funkcija za omogućavanje interakcije (pomeranje, zumiranje)
+        function enableImageInteraction() {
+            userImage.addEventListener('touchstart', handleTouchStart, { passive: false });
+            userImage.addEventListener('touchmove', handleTouchMove, { passive: false });
+            userImage.addEventListener('touchend', handleTouchEnd);
+        }
+
+        // Funkcija za onemogućavanje interakcije
+        function disableImageInteraction() {
+            userImage.removeEventListener('touchstart', handleTouchStart);
+            userImage.removeEventListener('touchmove', handleTouchMove);
+            userImage.removeEventListener('touchend', handleTouchEnd);
+        }
+
+        // Rukovaoc dodirnih događaja
+        function handleTouchStart(e) {
+            if (isImageLocked) {
+                e.preventDefault();
+                return;
+            }
+            if (e.touches.length === 1) {
+                // Pamti početnu poziciju za pomeranje
+                startPos = {
+                    x: e.touches[0].clientX - pos.x,
+                    y: e.touches[0].clientY - pos.y
+                };
+            } else if (e.touches.length === 2) {
+                // Pamti početnu udaljenost za zumiranje
+                initialDistance = Math.hypot(
+                    e.touches[0].clientX - e.touches[1].clientX,
+                    e.touches[0].clientY - e.touches[1].clientY
+                );
+                initialScale = currentScale;
+            }
+        }
+
+        function handleTouchMove(e) {
+            if (isImageLocked) {
+                e.preventDefault();
+                return;
+            }
+            if (e.touches.length === 1) {
+                // Pomeranje slike
+                pos.x = e.touches[0].clientX - startPos.x;
+                pos.y = e.touches[0].clientY - startPos.y;
+                userImage.style.transform = `translate(${pos.x}px, ${pos.y}px) scale(${currentScale})`;
+            } else if (e.touches.length === 2 && initialDistance !== null) {
+                // Zumiranje slike (pinch)
+                const currentDistance = Math.hypot(
+                    e.touches[0].clientX - e.touches[1].clientX,
+                    e.touches[0].clientY - e.touches[1].clientY
+                );
+                const scale = initialScale * (currentDistance / initialDistance);
+                // Ograniči zum između 0.1x i 5x
+                currentScale = Math.min(Math.max(scale, 0.1), 5);
+                userImage.style.transform = `translate(${pos.x}px, ${pos.y}px) scale(${currentScale})`;
+            }
+        }
+
+        function handleTouchEnd() {
+            initialDistance = null;
+        }
+
+        // Funkcija za zaključavanje/otključavanje slike
+        function toggleLock() {
+            isImageLocked = !isImageLocked;
+            if (isImageLocked) {
+                lockButton.classList.add('locked');
+                lockButton.textContent = 'Otključaj';
+                disableImageInteraction();
+            } else {
+                lockButton.classList.remove('locked');
+                lockButton.textContent = 'Zaključaj';
+                enableImageInteraction();
+            }
+        }
+
+        // Onemogući podrazumevano ponašanje (zumiranje stranice) na dvolični dodir
+        document.addEventListener('dblclick', function(e) {
+            e.preventDefault();
+        }, { passive: false });
+    </script>
+</body>
+</html>
